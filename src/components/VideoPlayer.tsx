@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Hls from 'hls.js';
-import { Play, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Play, AlertCircle, RefreshCw, Loader2, Settings2 } from 'lucide-react';
 import { M3UEntry } from '../utils/m3uParser';
+
+interface QualityLevel {
+  id: number;
+  height: number;
+  bitrate: number;
+}
 
 interface VideoPlayerProps {
   entry: M3UEntry | null;
@@ -16,11 +22,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
   const [loading, setLoading] = useState(false);
   const [isMixedContent, setIsMixedContent] = useState(false);
   const [useProxy, setUseProxy] = useState(forceProxy);
+  const [levels, setLevels] = useState<QualityLevel[]>([]);
+  const [currentLevel, setCurrentLevel] = useState<number>(-1); // -1 is Auto
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
 
   useEffect(() => {
     setError(null);
     setUseProxy(forceProxy);
     setLoading(false);
+    setLevels([]);
+    setCurrentLevel(-1);
+    setShowQualityMenu(false);
     
     if (entry?.url.startsWith('http:')) {
       setIsMixedContent(window.location.protocol === 'https:');
@@ -46,6 +58,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
       hlsRef.current = null;
     }
 
+    let isSubscribed = true;
+
     if (Hls.isSupported() && (entry.url.includes('.m3u8') || useProxy)) {
       const hls = new Hls({
         enableWorker: true,
@@ -59,16 +73,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
       hls.attachMedia(video);
       hlsRef.current = hls;
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+        if (!isSubscribed) return;
         setLoading(false);
+        
+        // Extract quality levels
+        const availableLevels = hls.levels.map((level, index) => ({
+          id: index,
+          height: level.height,
+          bitrate: level.bitrate
+        })).sort((a, b) => b.height - a.height);
+        
+        setLevels(availableLevels);
+
         if (autoPlay) {
           video.play().catch(e => {
-            console.error("Auto-play failed:", e);
+            if (e.name !== 'AbortError') {
+              console.error("Auto-play failed:", e);
+            }
           });
         }
       });
 
       hls.on(Hls.Events.ERROR, (event, data) => {
+        if (!isSubscribed) return;
         console.error("HLS Error:", data);
         if (data.fatal) {
           setLoading(false);
@@ -93,11 +121,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
       video.load();
       if (autoPlay) {
         video.play().then(() => {
+          if (!isSubscribed) return;
           setLoading(false);
         }).catch(e => {
-          console.error("Native playback failed:", e);
-          setLoading(false);
-          setError("Playback failed. This stream might require a specific player or is currently unavailable.");
+          if (!isSubscribed) return;
+          if (e.name !== 'AbortError') {
+            console.error("Native playback failed:", e);
+            setLoading(false);
+            setError("Playback failed. This stream might require a specific player or is currently unavailable.");
+          }
         });
       } else {
         setLoading(false);
@@ -105,12 +137,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
     }
 
     return () => {
+      isSubscribed = false;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
     };
-  }, [entry, useProxy]);
+  }, [entry, useProxy, autoPlay]);
+
+  const handleLevelChange = (levelId: number) => {
+    if (hlsRef.current) {
+      hlsRef.current.currentLevel = levelId;
+      setCurrentLevel(levelId);
+      setShowQualityMenu(false);
+    }
+  };
 
   if (!entry) {
     return (
@@ -173,32 +217,72 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
         </div>
       )}
       
-      {/* Custom Overlay for Channel Info */}
+      {/* Custom Overlay for Channel Info and Quality */}
       <div className="absolute top-0 left-0 right-0 p-6 bg-gradient-to-b from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        <div className="flex items-center gap-4">
-          {entry.logo && (
-            <img 
-              src={entry.logo} 
-              alt={entry.name} 
-              className="w-12 h-12 object-contain bg-white/10 rounded p-1"
-              referrerPolicy="no-referrer"
-            />
-          )}
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-white">{entry.name}</h2>
-              {useProxy && (
-                <span className="px-1.5 py-0.5 bg-emerald-500 text-zinc-950 text-[10px] font-bold rounded uppercase tracking-tighter">
-                  Proxy Active
+        <div className="flex items-start justify-between w-full">
+          <div className="flex items-center gap-4">
+            {entry.logo && (
+              <img 
+                src={entry.logo} 
+                alt={entry.name} 
+                className="w-12 h-12 object-contain bg-white/10 rounded p-1"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-white">{entry.name}</h2>
+                {useProxy && (
+                  <span className="px-1.5 py-0.5 bg-emerald-500 text-zinc-950 text-[10px] font-bold rounded uppercase tracking-tighter">
+                    Proxy Active
+                  </span>
+                )}
+              </div>
+              {entry.group && (
+                <span className="text-xs uppercase tracking-wider text-zinc-400 font-semibold">
+                  {entry.group}
                 </span>
               )}
             </div>
-            {entry.group && (
-              <span className="text-xs uppercase tracking-wider text-zinc-400 font-semibold">
-                {entry.group}
-              </span>
-            )}
           </div>
+
+          {/* Quality Selector */}
+          {levels.length > 0 && (
+            <div className="relative pointer-events-auto">
+              <button 
+                onClick={() => setShowQualityMenu(!showQualityMenu)}
+                className="flex items-center gap-2 bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-all"
+              >
+                <Settings2 size={14} />
+                {currentLevel === -1 ? 'Auto' : `${levels.find(l => l.id === currentLevel)?.height}p`}
+              </button>
+
+              {showQualityMenu && (
+                <div className="absolute right-0 mt-2 w-32 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50">
+                  <div className="p-2 border-b border-zinc-800 text-[10px] uppercase tracking-widest text-zinc-500 font-bold text-center">
+                    Quality
+                  </div>
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                    <button
+                      onClick={() => handleLevelChange(-1)}
+                      className={`w-full text-left px-4 py-2 text-xs transition-colors ${currentLevel === -1 ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
+                    >
+                      Auto
+                    </button>
+                    {levels.map((level) => (
+                      <button
+                        key={level.id}
+                        onClick={() => handleLevelChange(level.id)}
+                        className={`w-full text-left px-4 py-2 text-xs transition-colors ${currentLevel === level.id ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`}
+                      >
+                        {level.height}p
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

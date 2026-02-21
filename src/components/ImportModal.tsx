@@ -25,13 +25,12 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImp
       const response = await fetch(`/api/proxy-m3u?url=${encodeURIComponent(url)}`);
       if (!response.ok) {
         let errorMessage = 'Failed to fetch playlist';
+        const errorText = await response.text();
         try {
-          const data = await response.json();
+          const data = JSON.parse(errorText);
           errorMessage = data.error || errorMessage;
         } catch (e) {
-          // If not JSON, try to get text or just use status
-          const text = await response.text();
-          errorMessage = text.slice(0, 100) || `Error ${response.status}: ${response.statusText}`;
+          errorMessage = errorText.slice(0, 100) || `Error ${response.status}: ${response.statusText}`;
         }
         throw new Error(errorMessage);
       }
