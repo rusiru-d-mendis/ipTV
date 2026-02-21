@@ -37,7 +37,7 @@ async function startServer() {
     }
   });
 
-  // Proxy endpoint for stream manifests to bypass CORS
+  // Proxy endpoint for stream manifests to bypass CORS and Mixed Content
   app.get("/api/proxy-manifest", async (req, res) => {
     const url = req.query.url as string;
     if (!url) return res.status(400).send("URL required");
@@ -46,16 +46,60 @@ async function startServer() {
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          'Referer': new URL(url).origin
         }
       });
-      const contentType = response.headers.get("Content-Type");
-      if (contentType) res.set("Content-Type", contentType);
+      
+      if (!response.ok) {
+        return res.status(response.status).send(`Target returned ${response.status}`);
+      }
+
+      const contentType = response.headers.get("Content-Type") || "";
+      
+      // If it's an M3U8 manifest, we need to rewrite URLs to also go through the proxy
+      if (contentType.includes("mpegurl") || contentType.includes("apple.mpegurl") || url.includes(".m3u8")) {
+        let text = await response.text();
+        const parsedUrl = new URL(url);
+        const baseUrl = parsedUrl.origin + parsedUrl.pathname.substring(0, parsedUrl.pathname.lastIndexOf('/') + 1);
+        
+        const lines = text.split('\n');
+        const rewrittenLines = lines.map(line => {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) {
+            // Handle URI= attributes in tags (like #EXT-X-KEY or #EXT-X-MEDIA)
+            if (trimmed.includes('URI="')) {
+              return trimmed.replace(/URI="([^"]+)"/g, (match, p1) => {
+                let absoluteAttrUrl = p1;
+                if (!p1.startsWith('http')) {
+                  absoluteAttrUrl = p1.startsWith('/') ? parsedUrl.origin + p1 : baseUrl + p1;
+                }
+                return `URI="/api/proxy-manifest?url=${encodeURIComponent(absoluteAttrUrl)}"`;
+              });
+            }
+            return line;
+          }
+          
+          let absoluteUrl = trimmed;
+          if (!trimmed.startsWith('http')) {
+            absoluteUrl = trimmed.startsWith('/') ? parsedUrl.origin + trimmed : baseUrl + trimmed;
+          }
+          
+          return `/api/proxy-manifest?url=${encodeURIComponent(absoluteUrl)}`;
+        });
+        
+        res.set("Content-Type", "application/vnd.apple.mpegurl");
+        res.set("Access-Control-Allow-Origin", "*");
+        return res.send(rewrittenLines.join('\n'));
+      }
+
+      // For segments (.ts) or other binary data, just pipe it
+      res.set("Content-Type", contentType);
       res.set("Access-Control-Allow-Origin", "*");
+      res.set("Cache-Control", "public, max-age=3600");
       
       const buffer = await response.arrayBuffer();
       res.send(Buffer.from(buffer));
     } catch (error: any) {
+      console.error("Proxy Error:", error.message);
       res.status(500).send(error.message);
     }
   });
