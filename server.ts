@@ -43,17 +43,31 @@ async function startServer() {
     if (!url) return res.status(400).send("URL required");
     
     try {
-      const response = await fetch(url, {
+      const fetchOptions: RequestInit = {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
         }
-      });
+      };
+
+      // Pass through Range header if present (important for some video segments)
+      if (req.headers.range) {
+        (fetchOptions.headers as any)['Range'] = req.headers.range;
+      }
+
+      const response = await fetch(url, fetchOptions);
       
-      if (!response.ok) {
+      if (!response.ok && response.status !== 206) {
         return res.status(response.status).send(`Target returned ${response.status}`);
       }
 
       const contentType = response.headers.get("Content-Type") || "";
+      
+      // Pass through important headers
+      if (response.headers.get("Content-Range")) res.set("Content-Range", response.headers.get("Content-Range")!);
+      if (response.headers.get("Accept-Ranges")) res.set("Accept-Ranges", response.headers.get("Accept-Ranges")!);
+      if (response.headers.get("Content-Length")) res.set("Content-Length", response.headers.get("Content-Length")!);
       
       // If it's an M3U8 manifest, we need to rewrite URLs to also go through the proxy
       if (contentType.includes("mpegurl") || contentType.includes("apple.mpegurl") || url.includes(".m3u8")) {

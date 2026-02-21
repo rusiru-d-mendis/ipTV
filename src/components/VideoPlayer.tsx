@@ -64,6 +64,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
+        backBufferLength: 90,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 600,
         xhrSetup: (xhr) => {
           xhr.withCredentials = false;
         }
@@ -172,6 +175,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
         className="w-full h-full object-contain"
         controls
         playsInline
+        muted={autoPlay} // Mute by default if autoplay is enabled to satisfy browser policies
       />
 
       {loading && !error && (
@@ -180,6 +184,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ entry, autoPlay = true
             <Loader2 size={48} className="text-emerald-500 animate-spin" />
             <p className="text-zinc-300 text-sm font-medium">Loading stream...</p>
           </div>
+        </div>
+      )}
+
+      {/* Manual Play Overlay if browser blocks autoplay */}
+      {!loading && !error && videoRef.current?.paused && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors pointer-events-none">
+          <button 
+            onClick={() => videoRef.current?.play()}
+            className="w-20 h-20 bg-emerald-500 text-zinc-950 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/20 hover:scale-110 transition-transform pointer-events-auto"
+          >
+            <Play size={32} fill="currentColor" className="ml-1" />
+          </button>
         </div>
       )}
 
